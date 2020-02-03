@@ -1,0 +1,33 @@
+{
+  "private": true,
+  "name": "weblang",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "build:ts": "tsc -p src",
+    "build:app": "copy-and-watch app/* dist",
+    "build:css": "copy-and-watch src/**/*.css dist",
+    "build": "npm run build:ts && npm run build:css && npm run build:app",
+    "watch:ts": "tsc --watch -p src",
+    "watch:app": "copy-and-watch --watch app/* dist",
+    "watch:css": "copy-and-watch --watch src/**/*.css dist",
+    "watch": "concurrently -r -k \"npm run watch:ts\" \"npm run watch:app\" \"npm run watch:css\"",
+    "start": "http-server -c-1 dist",
+    "start:watch": "nodemon --watch dist npm run start",
+    "go": "concurrently -k -n run,watch -c yellow,green \"npm run start:watch\" \"npm run watch\"",
+    "clean": "rimraf dist node_modules",
+    "rebuild": "npm run clean && npm install- && npm run build",
+    "test": "concurrently \"npm run watch\" \"nodemon --watch dist node test/test.js\""
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {},
+  "devDependencies": {
+    "amd-loader": "0.0.8",
+    "concurrently": "^3.5.1",
+    "copy-and-watch": "^0.1.4",
+    "http-server": "^0.12.1",
+    "nodemon": "^1.17.2",
+    "rimraf": "^2.6.2"
+  }
+}
