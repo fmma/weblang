@@ -31,7 +31,8 @@ function parsePattern(): Parser<Pattern> {
     return biasedChoice<Pattern>(
         pmap(_ => ['Pwild'], token(/^_/)),
         pmap(x => ['Pvar', x], parseIdent),
-        pmap(ps => ['Prec', ps], parseRecord<Pattern>(/^{/, /^}/, plazy(parsePattern)))
+        pmap(ps => ['Prec', ps], parseRecord<Pattern>(/^{/, /^}/, plazy(parsePattern))),
+        pmap(ps => ['Prec', listToRecord(ps.map((p, i) => [String(i), p]))], parseBrackeets<Pattern[]>(/^\(/, /^\)/, sepBy<Pattern>(token(/^,/), plazy(parsePattern)))),
     )
 }
 

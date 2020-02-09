@@ -12,12 +12,15 @@
     "watch:app": "copy-and-watch --watch app/* dist",
     "watch:css": "copy-and-watch --watch src/**/*.css dist",
     "watch": "concurrently -r -k \"npm run watch:ts\" \"npm run watch:app\" \"npm run watch:css\"",
-    "start": "http-server -c-1 dist",
+    "start": "http-server -s -c-1 dist",
     "start:watch": "nodemon --watch dist npm run start",
-    "go": "concurrently -k -n run,watch -c yellow,green \"npm run start:watch\" \"npm run watch\"",
+    "go": "concurrently -k -n run,watch -c yellow,green \"npm run start:watch > nul 2>&1\" \"npm run watch\"",
     "clean": "rimraf dist node_modules",
     "rebuild": "npm run clean && npm install- && npm run build",
     "test": "concurrently \"npm run watch\" \"nodemon --watch dist node test/test.js\""
+  },
+  "nodemonConfig": {
+    "verbose": false
   },
   "author": "",
   "license": "ISC",

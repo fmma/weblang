@@ -92,12 +92,10 @@ export function evalExp(ctx: Record<any>, e: Exp): any {
             return e[1].map(e0 => evalExp(ctx, e0));
         case 'Erec':
             return recordMap(e[1], (e0, _, v) => {
-                ctx['this'] = v;
-                return evalExp(ctx, e0);
+                return evalExp({...ctx, ...{this: v}}, e0);
             });
         case 'Evariant':
             const ret = (v: Tagged<any>) => {
-                ctx['fix'] = ret;
                 const f = evalExp(ctx, e[1][v[0]])
                 return f(v[1]);
             }
