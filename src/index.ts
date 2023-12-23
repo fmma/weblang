@@ -1,7 +1,7 @@
 import './dom.js';
-import { repl, toStringExp } from "./lang/exp.js";
-import { parse } from "./lang/parser.js";
-import { lastType, log, replTypeOf, setLog, solveEquations, solveFull, substitute, toStringType } from './lang/type.js';
+import { evalExp, repl, toStringExp, importModule } from "./lang/exp.js";
+import { parse, parse2 } from "./lang/parser.js";
+import { lastType, log, replTypeOf, setLog, solveEquations, solveFull, substitute, toStringType, Type, typeExp } from './lang/type.js';
 
 export class IndexPage {
 
@@ -97,6 +97,8 @@ export class IndexPage {
                     this.logDiv._div()._text(l);
                 });
             });
+            importModule.importModule = (name: string) => this.importModule(name);
+            this.importedModules.clear();
             this.text.textContent = 'Result:' + repl(this.textArea.value ?? '');
         }
         catch(e) {
@@ -116,6 +118,20 @@ export class IndexPage {
         }
     }
 
+    importedModules: Map<string, any> = new Map();
+
+    importModule(n: string): any {
+        {
+            const v = this.importedModules.get(n);
+            if(v)
+                return v;
+        }
+        const src = window.localStorage.getItem('weblang:src:' + n) ?? 'failed to import module ' + n;
+        const v = {};
+        this.importedModules.set(n, v);
+        Object.assign(v, evalExp({}, parse2(src)));
+        return v;
+    }
 }
 
 new IndexPage(document.body);

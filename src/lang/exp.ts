@@ -18,15 +18,19 @@
  * x = e1; y = e2; e3 == e1 (x => e2 (y => e3))
  */
 
-import { parse, ops } from './parser.js';
-import { Record, recordMap, recordToList2, toStringBrackets } from "./util.js";
+import { ops, parse } from './parser.js';
+import { Type, toStringType } from './type.js';
+import { Record, recordMapUsingGetters, recordToList2, toStringBrackets } from "./util.js";
 
 export type Pattern = Pvar | Pwild | Prec;
 export type Pvar = ['Pvar', string];
 export type Pwild = ['Pwild'];
 export type Prec = ['Prec', Record<Pattern>];
 
-export type Exp = Enum | Echar | Evar | Eop | Elam | Eapp | Elist | Erec | Evariant | Etag;
+export type Exp = Enum | Echar | Evar | Eop | Elam
+    | Eapp | Elist | Erec | Evariant | Etag | Eimport
+    | Etype | Elet;
+
 export type Enum = ['Enum', number];
 export type Echar = ['Echar', string];
 export type Evar = ['Evar', string];
@@ -37,6 +41,9 @@ export type Elist = ['Elist', Exp[]];
 export type Erec = ['Erec', Record<Exp>];
 export type Evariant = ['Evariant', Record<Exp>];
 export type Etag = ['Etag', string];
+export type Eimport = ['Eimport', string];
+export type Etype = ['Etype', Type, Exp];
+export type Elet = ['Elet', Pattern, Exp, Exp];
 
 export type Tagged<A> = [string, A];
 
@@ -68,8 +75,18 @@ export function toStringExp(e: Exp, prec = 0): string {
             return '⟨' + recordToList2(e[1]).map(([l, e]) => l + ': ' + toStringExp(e)).join(', ') + '⟩';
         case 'Etag':
             return '#' + e[1];
+        case 'Eimport':
+            return 'import ' + e[1];
+        case 'Etype':
+            return toStringBrackets(toStringType(e[1]) + ' : ' + toStringExp(e[2]), true);
+        case 'Elet':
+            return "let " + toStringPattern(e[1]) + ' = ' + toStringExp(e[2]) + ';\n' + toStringExp(e[3]);
     }
 }
+
+export const importModule: { importModule: (name: string) => any} = {
+    importModule: () => {throw 'Imports not allowed'}
+};
 
 export function evalExp(ctx: Record<any>, e: Exp): any {
     switch(e[0]) {
@@ -91,7 +108,7 @@ export function evalExp(ctx: Record<any>, e: Exp): any {
         case 'Elist':
             return e[1].map(e0 => evalExp(ctx, e0));
         case 'Erec':
-            return recordMap(e[1], (e0, _, v) => {
+            return recordMapUsingGetters(e[1], (e0, _, v) => {
                 return evalExp({...ctx, ...{this: v}}, e0);
             });
         case 'Evariant':
@@ -102,8 +119,16 @@ export function evalExp(ctx: Record<any>, e: Exp): any {
             return ret;
         case 'Etag':
             return (e0: any) => [e[1], e0] as Tagged<any>
+        case 'Eimport':
+            return importModule.importModule(e[1]);
+        case 'Etype':
+            return evalExp(ctx, e[2]);
+        case 'Elet':
+            const v0 = evalExp(ctx, e[2]);
+            const ctx0 = bindPattern(ctx, e[1], v0);
+            return evalExp(ctx0, e[3]);
         default:
-            throw(e);
+            throw 'Unknown exp: ' + e;
     }
 }
 
@@ -120,7 +145,7 @@ function bindPattern(ctx: Record<any>, p: Pattern, v:any): Record<any> {
                 return bindPattern(result, p[1][key], v[key]);
             }, ctx);
         default:
-            throw(p);
+            throw 'Unknown pattern' + p;
     }
 }
 

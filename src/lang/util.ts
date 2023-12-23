@@ -21,6 +21,21 @@ export function recordMap<A, B>(object: Record<A>, mapFn: (x: A, key: string, re
     }, {})
 }
 
+export function recordMapUsingGetters<A, B>(object: Record<A>, mapFn: (x: A, key: string, result: Record<B>) => B): Record<B> {
+    return Object.keys(object).reduce<Record<B>>((result, key) => {
+        Object.defineProperty(result, key, {
+            get: () => {
+                const x = mapFn(object[key], key, result);
+                Object.defineProperty(result, key, {value: x});
+                return x;
+            },
+            enumerable: true,
+            configurable: true
+        });
+        return result
+    }, {})
+}
+
 export function recordDifferenceWith<A, B>(f: (t1: A) => B, ts1: Record<A>, ts2: Record<A>): Record<B> {
     const ks1 = Object.keys(ts1);
     const ks2 = Object.keys(ts2);

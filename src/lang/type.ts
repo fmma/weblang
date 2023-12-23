@@ -1,8 +1,11 @@
 import { Exp, Pattern } from "./exp.js";
-import { parse, ops, parseType } from "./parser.js";
-import { Record, recordMap, recordToList2, toStringBrackets, recordIntersectWith, recordDifferenceWith } from "./util.js";
+import { ops, parse, parseType } from "./parser.js";
+import { Record, recordDifferenceWith, recordIntersectWith, recordMap, recordToList2, toStringBrackets } from "./util.js";
 
-export type Type = Tnum | Tchar | Tunit | Tempty | Tfun | Tlist | Trec | Tvariant | Tvar | Tmu | Tforall | TforallVar;
+export type Type
+    = Tnum | Tchar | Tunit | Tempty | Tfun | Tlist
+    | Trec | Tvariant | Tvar | Tmu | Tforall;
+
 export type Tnum = ['Tnum'];
 export type Tchar = ['Tchar'];
 export type Tunit = ['Tunit'];
@@ -12,10 +15,8 @@ export type Tlist = ['Tlist', Type];
 export type Trec = ['Trec', Record<Type>, Type];
 export type Tvariant = ['Tvariant', Record<Type>, Type];
 export type Tvar = ['Tvar', number];
-export type Tmu = ['Tmu', Type];
-export type Tmuref = ['Tmuref', number];
-export type Tforall = ['Tforall', Type];
-export type TforallVar = ['TforallVar', number]
+export type Tmu = ['Tmu', number, Type];
+export type Tforall = ['Tforall', number, Type];
 
 const optypes: {[x: string]: Type} = {};
 {
@@ -25,6 +26,7 @@ const optypes: {[x: string]: Type} = {};
         const r = p(string);
         if(r.length === 1) {
             optypes[k] = r[0][0];
+            console.log(k + ':' + toStringType(r[0][0]));
         }
         else {
             console.log("WARNING: Could not parse optype for " + k + " : " + string);
@@ -61,8 +63,12 @@ export function solveEquations() {
                 tvars.clear();
                 typeVars(t);
                 if(tvars.has(a)) {
-                    shiftVar = a;
-                    tvarMap.set(a, ['Tmu', shift(t)]);
+                    // mu intro
+                    const b = freshVar();
+                    tvarMap.set(a, b);
+                    const t0 = substitute(t);
+                    tvarMap.clear();
+                    tvarMap.set(a, ['Tmu', b[1], t0]);
                 }
                     // throw 'Occurrence check failed: ' + a + ' in ' + toStringType(t);
                 else
@@ -84,8 +90,7 @@ export function solveEquations() {
 function typeVars(t: Type) {
     switch(t[0]) {
         case 'Tvar':
-            if(t[1] >= 0)
-                tvars.add(t[1]);
+            tvars.add(t[1]);
             return;
         case 'Tfun':
             typeVars(t[1]);
@@ -100,10 +105,20 @@ function typeVars(t: Type) {
             typeVars(t[2]);
             return;
         case 'Tmu':
-            typeVars(t[1]);
+            if(tvars.has(t[1]))
+                typeVars(t[2]);
+            else {
+                typeVars(t[2]);
+                tvars.delete(t[1]);
+            }
             return;
         case 'Tforall':
-            typeVars(t[1]);
+            if(tvars.has(t[1]))
+                typeVars(t[2]);
+            else {
+                typeVars(t[2]);
+                tvars.delete(t[1]);
+            }
             return;
     }
 }
@@ -133,9 +148,9 @@ function flattenType(t: Type): Type {
         case 'Tfun':
             return ['Tfun', flattenType(t[1]), flattenType(t[2])];
         case'Tmu':
-            return ['Tmu', flattenType(t[1])];
+            return ['Tmu', t[1], flattenType(t[2])];
         case 'Tforall':
-            return ['Tforall', flattenType(t[1])];
+            return ['Tforall', t[1], flattenType(t[2])];
     }
     return t;
 }
@@ -158,7 +173,7 @@ function eqrowtype(ts0: Record<Type>, t0: Type, ts1: Record<Type>, t1: Type, cst
         eqtype(a, cstr(diff1, b));
     }
     else {
-        const c:Type = ['Tvar', fresh++];
+        const c:Type = freshVar();
         eqtype(b, cstr(diff0, c));
         eqtype(a, cstr(diff1, c));
     }
@@ -166,6 +181,7 @@ function eqrowtype(ts0: Record<Type>, t0: Type, ts1: Record<Type>, t1: Type, cst
 
 function eqtype(t0: Type, t1: Type): void {
     const k = toStringType(t0) + ' = ' + toStringType(t1);
+    console.log(k);
     if(tVisited.has(k)) {
         console.log(k);
         return;
@@ -187,30 +203,31 @@ function eqtype(t0: Type, t1: Type): void {
         equations.set(a + ' = ' + toStringType(t), [a, t]);
         return;
     }
-    let b = false;
     let maxIter = 100;
-    while((t0[0] === 'Tmu' || t0[0] === 'Tforall') && --maxIter > 0) {
+    while((t0[0] === 'Tmu') && --maxIter > 0) {
+        tvarMap.clear();
         if(t0[0] === 'Tmu') {
-            unrollDepth = -1;
-            unrollType = t0;
-            t0 = unroll(t0[1]);
+            //mu elim
+            tvarMap.set(t0[1], t0);
+            t0 = substitute(t0[2]);
         }
         else {
-            instDepth = 0;
-            instType = ['Tvar', fresh++];
-            instantiate(t0[1]);
+            // forall elim
+            tvarMap.set(t0[1], freshVar());
+            t0 = substitute(t0[2]);
         }
     }
-    while((t1[0] === 'Tmu' || t1[0] === 'Tforall') && --maxIter > 0) {
+    while((t1[0] === 'Tmu') && --maxIter > 0) {
+        tvarMap.clear();
         if(t1[0] === 'Tmu') {
-            unrollDepth = -1;
-            unrollType = t1;
-            t1 = unroll(t1[1]);
+            //mu elim
+            tvarMap.set(t1[1], t1);
+            t1 = substitute(t1[2]);
         }
         else {
-            instDepth = 0;
-            instType = ['Tvar', fresh++];
-            instantiate(t1[1]);
+            // forall elim
+            tvarMap.set(t1[1], freshVar());
+            t1 = substitute(t1[2]);
         }
     }
     if(maxIter <= 0)
@@ -250,77 +267,67 @@ function eqtype(t0: Type, t1: Type): void {
     throw 'Type error: ' + toStringType(t0) + ' == ' + toStringType(t1);
 }
 
-let instDepth = 0;
-let instType: Type = ['Tunit'];
-
-function instantiate(t:Type): Type {
-    switch(t[0]) {
-        case 'Tchar':
-        case 'Tnum':
-        case 'Tempty':
-        case 'Tunit':
-        case 'Tvar':
-            return t;
-        case 'TforallVar':
-            if(t[1] === instDepth) { // forall. T0
-                return instType;
-            }
-            else if(t[1] < instDepth) { // forall. forall. T0 T1
-                return t;
-            }
-            else { // forall. T0 T1
-                throw 'Ill-formed forall'
-            }
-        case 'Tfun':
-            return ['Tfun', instantiate(t[1]), instantiate(t[2])];
-        case 'Tlist':
-            return ['Tlist', instantiate(t[1])];
-        case 'Trec':
-            return ['Trec', recordMap<Type, Type>(t[1], instantiate), instantiate(t[2])];
-        case 'Tvariant':
-            return ['Tvariant', recordMap<Type, Type>(t[1], instantiate), instantiate(t[2])];
-        case 'Tforall':
-            instDepth++;
-            const t0 = instantiate(t[1]);
-            instDepth--;
-            return ['Tforall', t0];
-        case 'Tmu':
-            return ['Tmu', instantiate(t[1])];
-    }
-}
-
 function typePattern(ctx: Record<Type>, p: Pattern): [Record<Type>, Type] {
     switch(p[0]) {
         case 'Pvar':
             const result = {...ctx};
-            const t: Type = ['Tvar', fresh++];
+            const t = freshVar();
             result[p[1]] = t;
             return [result, t];
         case 'Pwild':
-            return [ctx, ['Tvar', fresh++]];
+            return [ctx, freshVar()];
         case 'Prec':
             const [ctx0, lts] = Object.keys(p[1]).reduce<[Record<Type>, Record<Type>]>(([ctx0, t], key) => {
                 const [ctx1, t0] = typePattern(ctx0, p[1][key]);
                 t[key] = t0;
                 return [ctx1, t];
             }, [ctx, {}]);
-            return [ctx0, ['Trec', lts, ['Tvar', fresh++]]];
+            return [ctx0, ['Trec', lts, freshVar()]];
         default:
-            throw(p);
+            throw 'Unknown pattern' + p;
     }
 }
+
+function typePatternBind(ctx: Record<Type>, p: Pattern, t: Type): Record<Type> {
+    switch(p[0]) {
+        case 'Pvar':
+            const result = {...ctx};
+            result[p[1]] = t;
+            return result;
+        case 'Pwild':
+            return ctx;
+        case 'Prec':
+            throw 'Not supported: Record pattern in let-binding';
+        default:
+            throw 'Unknown pattern: ' + p;
+    }
+}
+
 
 export function typeExp(ctx: Record<Type>, e: Exp): Type {
     switch(e[0]) {
         case 'Enum': return ['Tnum'];
         case 'Echar': return ['Tchar'];
         case 'Evar': {
-            const t = ctx[e[1]];
+            let t = ctx[e[1]];
             if(t == null)
                 throw 'Type error: Unbound variable ' + e[1];
+            tvarMap.clear();
+            while(t[0] === 'Tforall') {
+                tvarMap.set(t[1], freshVar());
+                t = substitute(t[2]);
+            }
             return t;
         }
-        case 'Eop': return optypes[e[1]];
+        case 'Eop': {
+            let t = optypes[e[1]];
+            tvarMap.clear();
+            while(t[0] === 'Tforall') {
+                tvarMap.set(t[1], freshVar());
+                t = substitute(t[2]);
+            }
+            return t;
+        }
         case 'Elam': {
             const [ctx0, t0] = typePattern(ctx, e[1]);
             const t1 = typeExp(ctx0, e[2]);
@@ -329,28 +336,31 @@ export function typeExp(ctx: Record<Type>, e: Exp): Type {
         case 'Eapp': {
             const t0 = typeExp(ctx, e[1]);
             const t1 = typeExp(ctx, e[2]);
-            const t2: Type = ['Tvar', fresh++];
+            const t2: Type = freshVar();
             eqtype(t1, ['Tfun', t0, t2]);
             return t2;
         }
         case 'Elist': {
             const ts = e[1].map((e0 : Exp) => typeExp(ctx, e0));
-            const t: Type = ['Tvar', fresh++];
+            const t: Type = freshVar();
             ts.forEach(t0 => eqtype(t0, t));
             return ['Tlist', t];
         }
         case 'Erec': {
-            const a: Type = ['Tvar', fresh++];
-            const t0: Type = ['Trec', recordMap(e[1], e0 => typeExp({this: a, ...ctx}, e0)), ['Tunit']];
+            const a: Type = freshVar();
+            const t0: Type = ['Trec', recordMap(e[1], e0 => {
+                    const t0 = typeExp({this: a, ...ctx}, e0);
+                    return t0;
+                }), ['Tunit']];
             eqtype(a, t0);
             return t0;
         }
         case 'Evariant': {
             const ts = recordMap(e[1], e0 => typeExp(ctx, e0));
-            const t: Type = ['Tvar', fresh++];
+            const t: Type = freshVar();
 
             const ts0 = recordMap<Type, Type>(ts, t0 => {
-                const t1: Type = ['Tvar', fresh++];
+                const t1: Type = freshVar();
                 eqtype(t0, ['Tfun', t1, t]);
                 return t1;
             });
@@ -358,9 +368,29 @@ export function typeExp(ctx: Record<Type>, e: Exp): Type {
         }
         case 'Etag': {
             const ts: Record<Type> = {};
-            const t: Type = ['Tvar', fresh++]
+            const t: Type = freshVar()
             ts[e[1]] = t;
-            return ['Tfun', t, ['Tvariant', ts, ['Tvar', fresh++]]]
+            return ['Tfun', t, ['Tvariant', ts, freshVar()]]
+        }
+        case 'Eimport': {
+            return freshVar();
+        }
+        case 'Etype': {
+            const t0 = e[1];
+            let t = t0;
+            tvarMap.clear();
+            while(t[0] === 'Tforall') {
+                tvarMap.set(t[1], freshVar());
+                t = substitute(t[2]);
+            }
+            const t1 = typeExp(ctx, e[2]);
+            eqtype(t, t1);
+            return t0;
+        }
+        case 'Elet': {
+            const t0 = typeExp(ctx, e[2]);
+            const ctx0 = typePatternBind(ctx, e[1], t0);
+            return typeExp(ctx0, e[3]);
         }
     }
 }
@@ -377,15 +407,15 @@ export function toStringType(t:Type, prec = 0): string {
             return '{' + recordToList2(t[1]).map(([l, t]) => l + ': ' + toStringType(t)).join(', ') + (t[2][0] === 'Tunit' ? '' : '|' + toStringType(t[2])) +'}';
         case 'Tvariant': return '⟨' + recordToList2(t[1]).map(([l, t]) => l + ': ' + toStringType(t)).join(', ') + (t[2][0] === 'Tempty' ? '' : '|' + toStringType(t[2])) + '⟩';
         case 'Tvar': return String(t[1]);
-        case 'Tmu': return toStringBrackets("mu. " + toStringType(t[1]), true);
-        case 'Tforall': return toStringBrackets("forall. " + toStringType(t[1]), true);
-        case 'TforallVar': return 'T' + t[1];
+        case 'Tmu': return toStringBrackets("mu " + String(t[1]) + ". " + toStringType(t[2]), true);
+        case 'Tforall': return toStringBrackets("forall " + String(t[1]) + ". " + toStringType(t[2]), true);
     }
 }
 
 let tvars: Set<number> = new Set();
-let tvarMap: Map<number, Type> = new Map();
 let tVisited: Set<string> = new Set();
+
+let tvarMap: Map<number, Type> = new Map();
 
 export function substitute(t: Type): Type {
     switch(t[0]) {
@@ -393,7 +423,6 @@ export function substitute(t: Type): Type {
         case 'Tnum':
         case 'Tempty':
         case 'Tunit':
-        case 'TforallVar':
             return t;
         case 'Tvar':
             return tvarMap.get(t[1]) ?? t;
@@ -405,83 +434,24 @@ export function substitute(t: Type): Type {
             return ['Trec', recordMap<Type, Type>(t[1], substitute), substitute(t[2])];
         case 'Tvariant':
             return ['Tvariant', recordMap<Type, Type>(t[1], substitute), substitute(t[2])];
-        case 'Tmu':
-            return ['Tmu', substitute(t[1])];
-        case 'Tforall':
-            return ['Tforall', substitute(t[1])];
+        case 'Tmu':{
+                const t0 = tvarMap.get(t[1]);
+                tvarMap.delete(t[1]);
+                const t1: Type = ['Tmu', t[1], substitute(t[2])];
+                if(t0)
+                    tvarMap.set(t[1], t0);
+                return t1;
+            }
+        case 'Tforall': {
+                const t0 = tvarMap.get(t[1]);
+                tvarMap.delete(t[1]);
+                const t1: Type = ['Tforall', t[1], substitute(t[2])];
+                if(t0)
+                    tvarMap.set(t[1], t0);
+                return t1;
+            }
     }
 }
-
-let shiftVar = 0;
-let shiftDepth = -1;
-
-export function shift(t: Type): Type {
-    switch(t[0]) {
-        case 'Tchar':
-        case 'Tnum':
-        case 'Tempty':
-        case 'Tunit':
-        case 'TforallVar':
-            return t;
-        case 'Tvar':
-            if(t[1] === shiftVar)
-                return ['Tvar', shiftDepth];
-            return t;
-        case 'Tfun':
-            return ['Tfun', shift(t[1]), shift(t[2])];
-        case 'Tlist':
-            return ['Tlist', shift(t[1])];
-        case 'Trec':
-            return ['Trec', recordMap<Type, Type>(t[1], shift), shift(t[2])];
-        case 'Tvariant':
-            return ['Tvariant', recordMap<Type, Type>(t[1], shift), shift(t[2])];
-        case 'Tmu':
-            shiftDepth--;
-            const t0 = shift(t[1]);
-            shiftDepth++;
-            return ['Tmu', t0];
-        case 'Tforall':
-            return ['Tforall', shift(t[1])];
-    }
-}
-
-let unrollType = ['Tunit'] as Type;
-let unrollDepth = -1;
-
-export function unroll(t: Type): Type {
-    switch(t[0]) {
-        case 'Tchar':
-        case 'Tnum':
-        case 'Tempty':
-        case 'Tunit':
-        case 'TforallVar':
-            return t;
-        case 'Tvar':
-            if(t[1] < unrollDepth)
-                throw 'Ill-formed mu type: ' + toStringType(t);
-            else if(t[1] === unrollDepth)
-                return unrollType; // mu.mu. -1 -> -2 ---> mu. -1 -> (mu. mu. -1 -> -2)
-            else if(t[1] < 0)
-                return ['Tvar', t[1] + 1];
-            return t;
-        case 'Tfun':
-            return ['Tfun', unroll(t[1]), unroll(t[2])];
-        case 'Tlist':
-            return ['Tlist', unroll(t[1])];
-        case 'Trec':
-            return ['Trec', recordMap<Type, Type>(t[1], unroll), unroll(t[2])];
-        case 'Tvariant':
-            return ['Tvariant', recordMap<Type, Type>(t[1], unroll), unroll(t[2])];
-        case 'Tmu':
-            unrollDepth--;
-            const t0 = unroll(t[1]);
-            unrollDepth++;
-            return ['Tmu', t0];
-        case 'Tforall':
-            return ['Tforall', unroll(t[1])];
-    }
-}
-
 
 export function setLog() {
     log = [];
@@ -514,4 +484,8 @@ export function replTypeOf(x: string, clear: boolean = true): string {
     if(e.length === 0)
         return 'Parse error';
     return 'Ambiguous parse!';
+}
+
+function freshVar(): Tvar {
+    return ['Tvar', fresh++];
 }

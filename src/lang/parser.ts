@@ -8,12 +8,31 @@ export function parse(): Parser<Exp> {
         _ => ppure(x)));
 }
 
+export function parse2(x: string): Exp {
+    const e = parse()(x);
+    if(e == null)
+        throw 'Null exception';
+    if(e.length === 1){
+        if(e[0][1] === '') {
+            return e[0][0];
+        }
+        throw 'Parse error at: "' + e[0][1] + '"';
+    }
+    if(e.length === 0)
+        throw 'Parse error';
+    throw 'Ambiguous parse!';
+}
+
 export const ops: {[x: string]: [string,string]} = {
     '+': ['x => x[0] + x[1]', '(N, N) -> N'],
+    '#': ['x => x.length', 'forall a. [a] -> N'],
+    '&': ['x => Array.from({length: x}, (_,i) => i)', 'N -> [N]'],
+    'map': ['f => x => x.map(f)', 'forall a. forall b. (a -> b) -> [a] -> [b]']
 }
 
 const parseTag: Parser<string> = token(/^#[a-zA-Z][a-zA-Z]*/);
 const parseIdent: Parser<string> = token(/^[a-zA-Z][a-zA-Z]*/);
+const parseTypeVar: Parser<number> = pmap(x => x.charCodeAt(0) - 'a'.charCodeAt(0), token(/^[a-z]/));
 
 function parseProjections(): Parser<string[]> {
     return many(pbind(token(/^\./), _ => biasedChoice(parseIdent, token(/^[0-9]*/))));
@@ -39,10 +58,12 @@ function parsePattern(): Parser<Pattern> {
 function parseAtomicExp(): Parser<Exp> {
     return pbind(biasedChoice<Exp>(
         parseBrackeets(/^\(/, /^\)/, plazy(parseExp)),
+        pmap(x => ['Eimport', x], parseImport()),
         pmap(o => ['Eop', o], parseOp),
         pmap(n => ['Enum', n], parseNumber),
         pmap(c => ['Echar', c], parseChar),
         pmap(x => ['Evar', x], parseIdent),
+        pmap(x => ['Elist', [...JSON.parse(x)].map(c => ['Echar', c] as Exp)], token(/^"(?:[^"\\]|\\.)*"/)),
         pmap(es => ['Elist', es], parseBrackeets<Exp[]>(/^\[/, /^\]/, sepBy<Exp>(token(/^,/), plazy(parseExp)))),
         pmap(es => ['Erec', listToRecord(es.map((e, i) => [String(i), e]))], parseBrackeets<Exp[]>(/^\(/, /^\)/, sepBy<Exp>(token(/^,/), plazy(parseExp)))),
         pmap(les => ['Erec', les], parseRecord<Exp>(/^{/, /^}/, plazy(parseExp))),
@@ -59,11 +80,15 @@ function parseAtomicExp(): Parser<Exp> {
             }));
     }
 
-function parseSequence(): Parser<Exp> {
+function parseImport(): Parser<string> {
+    return pbind(token(/^import /), _ => parseIdent);
+}
+
+function parseLet_(): Parser<Exp> {
     return pbind(parseExpNoLet(),
-    e1 => pbind(token(/^;/),
-    _ => pbind(parseExp(),
-    e2 => ppure(['Eapp', e1, ['Elam', ['Pwild'], e2]]))));
+        e1 => pbind(token(/^;/),
+        _ => pbind(parseExp(),
+        e2 => ppure(['Elet', ['Pwild'], e1, e2]))));
 }
 
 function parseLet(): Parser<Exp> {
@@ -73,27 +98,40 @@ function parseLet(): Parser<Exp> {
         _ => pbind(parseExpNoLet(),
         e1 => pbind(token(/^;/),
         _ => pbind(parseExp(),
-        e2 => ppure(['Eapp', e1, ['Elam', p, e2]]))))
-    )));
+        e2 => ppure(['Elet', p, e1, e2])))))));
 }
 
 function parseExpNoLet(): Parser<Exp> {
     return biasedChoice<Exp>(
         papp<Exp, Exp>(pmap(p => e => ['Elam', p, e], parsePattern()), pbind(token(/^=>/), _ => parseExpNoLet())),
+        parseTypeAnnotation(),
         pmap((x: Exp[]) => x.reduce((result, e) => ['Eapp', result, e]), sepBy1(sat(/^\s*/m), parseAtomicExp()))
     )
+}
+
+function parseTypeAnnotation(): Parser<Exp> {
+    return papp(papp(pmap(t => _ => e => ['Etype', t, e], parseType()), token(/^:/)), plazy<Exp>(parseExpNoLet));
 }
 
 function parseExp(): Parser<Exp> {
     return biasedChoice<Exp>(
         parseLet(),
-        parseSequence(),
+        parseLet_(),
+        parseTypeAnnotation(),
         papp<Exp, Exp>(pmap(p => e => ['Elam', p, e], parsePattern()), pbind(token(/^=>/), _ => parseExp())),
         pmap((x: Exp[]) => x.reduce((result, e) => ['Eapp', result, e]), sepBy1(sat(/^\s*/m), parseAtomicExp()))
     );
 }
 
 export function parseType(): Parser<Type> {
+    return biasedChoice<Type>(
+        papp(papp(papp(pmap(_ => x => _ => t => ['Tforall', x, t], token(/^forall/)), parseTypeVar), token(/^\./)), plazy<Type>(parseType)),
+        papp(papp(papp(pmap(_ => x => _ => t => ['Tmu', x, t], token(/^mu/)), parseTypeVar), token(/^\./)), plazy<Type>(parseType)),
+        parseFunType()
+    )
+}
+
+export function parseFunType(): Parser<Type> {
     return biasedChoice<Type>(
         papp<Type, Type>(pmap(t0 => t1 => ['Tfun', t0, t1], parseAtomicType()), pbind(token(/^->/), _ => parseType())),
         parseAtomicType()
@@ -102,12 +140,14 @@ export function parseType(): Parser<Type> {
 
 function parseAtomicType(): Parser<Type> {
     return biasedChoice<Type>(
+        parseBrackeets(/^\(/, /^\)/, plazy(parseType)),
         pmap(_ => ['Tnum'], token(/^N/)),
         pmap(_ => ['Tchar'], token(/^C/)),
         pmap(t0 => ['Tlist', t0], parseBrackeets<Type>(/^\[/, /^\]/, plazy(parseType))),
         pmap(ts => ['Trec', listToRecord(ts.map((t, i) => [String(i), t])), ['Tunit']], parseBrackeets<Type[]>(/^\(/, /^\)/, sepBy<Type>(token(/^,/), plazy(parseType)))),
         pmap(lts => ['Trec', lts, ['Tunit']], parseRecord<Type>(/^{/, /^}/, plazy(parseType))),
         pmap(lts => ['Tvariant', lts, ['Tempty']], parseRecord<Type>(/^</, /^>/, plazy(parseType))),
+        pmap(x => ['Tvar', x], parseTypeVar)
     );
 }
 
